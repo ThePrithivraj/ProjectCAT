@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Word Count and Google Drive Upload</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        body {
+            font-family: 'Poppins', sans-serif;
+            background-image: linear-gradient(to right, #101010, #222);
+            color: #D4AF37;
+            text-align: center;
+            margin-top: 50px;
+        }
+
+        h1 {
+            font-size: 32px;
+            margin-bottom: 30px;
+            background: -webkit-linear-gradient(#D4AF37, #b38f30);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        input[type="file"], input[type="text"], select {
+            padding: 12px;
+            border: 1px solid #D4AF37;
+            margin: 15px 0;
+            width: 320px;
+            background-color: #222;
+            color: #D4AF37;
+            transition: all 0.3s ease;
+        }
+
+        input[type="file"]:hover, input[type="text"]:hover, select:hover {
+            border-color: #b38f30;
+            background-color: #333;
+        }
+
+        input[type="file"]:focus, input[type="text"]:focus, select:focus {
+            outline: none;
+            border-color: #b38f30;
+            box-shadow: 0 0 5px rgba(179, 143, 48, 0.5);
+        }
+
+        button {
+            padding: 12px 24px;
+            background-color: #D4AF37;
+            color: black;
+            border: none;
+            cursor: pointer;
+            margin: 15px;
+            font-weight: bold;
+            transition: background-color 0.3s ease, transform 0.3s ease;
+        }
+
+        button:hover {
+            background-color: #b38f30;
+            transform: scale(1.05);
+        }
+
+        button:disabled {
+            background-color: #555;
+            cursor: not-allowed;
+        }
+
+        p {
+            font-size: 18px;
+            margin-top: 20px;
+        }
+
+        #finalBill {
+            font-size: 22px;
+            font-weight: bold;
+            margin-top: 20px;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        /* Custom cursor on hover */
+        input[type="file"]:hover, button:hover {
+            cursor: pointer;
+        }
+
+        /* Responsive design for mobile */
+        @media (max-width: 600px) {
+            body {
+                margin-top: 20px;
+            }
+
+            input[type="file"], input[type="text"], select, button {
+                width: 100%;
+                box-sizing: border-box;
+            }
+
+            h1 {
+                font-size: 24px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Upload Document (PDF) for Word Count & Bill</h1>
+        <h2>Make sure all the details you enter is right, once entered won't be retrieved again</h2>
+
+        <input type="text" id="nameInput" placeholder="Enter your Name" required><br>
+        <input type="text" id="phoneInput" placeholder="Enter your Phone Number" required><br>
+        <input type="text" id="addressInput" placeholder="Enter your Address" required><br>
+       
+        <select id="statusInput">
+            <option value="Dayscholar">Dayscholar</option>
+            <option value="Hosteller">Hosteller</option>
+        </select><br>
+
+        <input type="file" id="fileInput" accept=".pdf,.docx"><br><br>
+        <button id="checkBtn" disabled>Check Word Count</button><br>
+        <p id="wordCount">Word Count: 0</p>
+        <h3>After Checking the amount, if you are fine, proceed to submit the document.</h3>
+        <button id="uploadBtn" disabled>Upload to Google Drive</button>
+
+        
+        <p id="finalBill">Final Bill: INR 0</p>
+    </div>
+
+    <script>
+        let selectedFile = null;
+        let accessToken = null;
+        const pricePerWord = 0.05;
+        const sheetId = '1utE6D_98Jdu20PxwHFSEeIOpU02VZE3K55-ty3csw9I';
+
+        document.getElementById('fileInput').addEventListener('change', function(event) {
+            selectedFile = event.target.files[0];
+            document.getElementById('checkBtn').disabled = false;
+            document.getElementById('uploadBtn').disabled = false;
+        });
+
+        document.getElementById('checkBtn').addEventListener('click', function() {
+            if (!selectedFile) {
+                alert('Please select a file first!');
+                return;
+            }
+
+            const fileExtension = selectedFile.name.split('.').pop().toLowerCase();
+            if (fileExtension === 'pdf') {
+                countWordsInPDF(selectedFile);
+            } else if (fileExtension === 'docx') {
+                countWordsInDOCX(selectedFile);
+            } else {
+                alert('Unsupported file type! Please upload a PDF or DOCX document.');
+            }
+        });
+
+        document.getElementById('uploadBtn').addEventListener('click', function() {
+            if (!selectedFile) {
+                alert('Please select a file first!');
+                return;
+            }
+
+            if (!accessToken) {
+                authenticateUser();
+                return;
+            }
+
+            const name = document.getElementById('nameInput').value;
+            const phone = document.getElementById('phoneInput').value;
+            const address = document.getElementById('addressInput').value;
+            const status = document.getElementById('statusInput').value;
+
+            if (name && phone && address) {
+                const folderName = `${name}-${phone}-${getCurrentDateTime()}`;
+                uploadFileToDrive(selectedFile, folderName, name, phone, address, status);
+            } else {
+                alert('Please fill in all required fields.');
+            }
+        });
+
+        function authenticateUser() {
+            const clientId = 'YOUR_GOOGLE_CLIENT_ID';
+            const scope = 'https://www.googleapis.com/auth/drive.file';
+            const redirectUri = window.location.origin;
+
+            const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?response_type=token&client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}&include_granted_scopes=true`;
+
+            window.location.href = authUrl;
+        }
+
+        window.onload = function() {
+            const hashParams = new URLSearchParams(window.location.hash.substr(1));
+            if (hashParams.has('access_token')) {
+                accessToken = hashParams.get('access_token');
+            }
+        };
+
+        function uploadFileToDrive(file, folderName, name, phone, address, status) {
+            createFolderIfNotExist(folderName).then((folderId) => {
+                const formData = new FormData();
+                formData.append('metadata', new Blob([JSON.stringify({
+                    name: file.name,
+                    parents: [folderId]
+                })], { type: 'application/json' }));
+                formData.append('file', file);
+
+                fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + accessToken,
+                    },
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(result => {
+                    alert('File uploaded to Google Drive!');
+                    generatePDF(name, phone, address, status, folderId);
+                })
+                .catch(error => {
+                    console.error('Error uploading file:', error);
+                });
+            });
+        }
+        function updateSheet(name, phone, address, status, filename, wordCount, finalBill) {
+            const sheetRange = 'Sheet1!A1:G1'; // Adjust this to your sheet and range.
+            const data = [[name, phone, address, status, filename, wordCount, finalBill]];
+
+            fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${sheetRange}:append?valueInputOption=USER_ENTERED`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': 'Bearer ' + accessToken,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    values: data,
+                }),
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.updates) {
+                    alert('Details updated in Google Sheet!');
+                } else {
+                    console.error('Error updating sheet:', result);
+                }
+            })
+            .catch(error => {
+                console.error('Error updating sheet:', error);
+            });
+        }
+        
+        function createFolderIfNotExist(folderName) {
+            return fetch(`https://www.googleapis.com/drive/v3/files?q=name='${folderName}' and mimeType='application/vnd.google-apps.folder'`, {
+                method: 'GET',
+                headers: {
+                    'Authorization': 'Bearer ' + accessToken,
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.files.length > 0) {
+                    return data.files[0].id;
+                } else {
+                    return createFolder(folderName);
+                }
+            });
+        }
+
+        function createFolder(folderName) {
+            return fetch('https://www.googleapis.com/drive/v3/files', {
+                method: 'POST',
+                headers: {
+                    'Authorization': 'Bearer ' + accessToken,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    name: folderName,
+                    mimeType: 'application/vnd.google-apps.folder',
+                })
+            })
+            .then(response => response.json())
+            .then(data => data.id);
+        }
+
+        function generatePDF(name, phone, address, status, folderId) {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+            const wordCount = document.getElementById('wordCount').textContent.split(': ')[1];
+            const finalBill = document.getElementById('finalBill').textContent.split(': ')[1];
+
+            doc.text(`Name: ${name}`, 10, 10);
+            doc.text(`Phone: ${phone}`, 10, 20);
+            doc.text(`Address: ${address}`, 10, 30);
+            doc.text(`Status: ${status}`, 10, 40);
+            doc.text(`Word Count: ${wordCount}`, 10, 50);
+            doc.text(`Final Bill: ${finalBill}`, 10, 60);
+
+            const pdfBlob = doc.output('blob');
+            const formData = new FormData();
+            formData.append('metadata', new Blob([JSON.stringify({
+                name: `${name}_details.pdf`,
+                parents: [folderId]
+            })], { type: 'application/json' }));
+            formData.append('file', pdfBlob);
+
+            fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+                method: 'POST',
+                headers: {
+                    'Authorization': 'Bearer ' + accessToken,
+                },
+                body: formData
+            })
+            .then(response => response.json())
+            .then(result => {
+                alert('Details PDF uploaded to Google Drive! Our Agent will contact you shortly for payment!:)');
+            })
+            .catch(error => {
+                console.error('Error uploading PDF:', error);
+            });
+        }
+
+        function countWordsInPDF(file) {
+            const fileReader = new FileReader();
+            fileReader.onload = function() {
+                const typedArray = new Uint8Array(this.result);
+                pdfjsLib.getDocument(typedArray).promise.then(function(pdf) {
+                    let totalWords = 0;
+
+                    const countWordsOnPage = (pageNum) => {
+                        return pdf.getPage(pageNum).then(function(page) {
+                            return page.getTextContent().then(function(textContent) {
+                                let pageText = textContent.items.map(item => item.str).join(' ');
+                                return pageText.split(/\s+/).length;
+                            });
+                        });
+                    };
+
+                    const countAllWords = (pageNum) => {
+                        if (pageNum > pdf.numPages) {
+                            updateWordCount(totalWords);
+                            return;
+                        }
+
+                        countWordsOnPage(pageNum).then(function(wordCount) {
+                            totalWords += wordCount;
+                            countAllWords(pageNum + 1);
+                        });
+                    };
+
+                    countAllWords(1);
+                });
+            };
+
+            fileReader.readAsArrayBuffer(file);
+        }
+
+        function countWordsInDOCX(file) {
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const arrayBuffer = event.target.result;
+                const zip = new JSZip();
+                zip.loadAsync(arrayBuffer).then(function(zip) {
+                    zip.file("word/document.xml").async("string").then(function(xmlString) {
+                        const parser = new DOMParser();
+                        const xmlDoc = parser.parseFromString(xmlString, "application/xml");
+                        const paragraphs = xmlDoc.getElementsByTagName("w:t");
+                        let totalWords = 0;
+
+                        for (let i = 0; i < paragraphs.length; i++) {
+                            totalWords += paragraphs[i].textContent.split(/\s+/).length;
+                        }
+
+                        updateWordCount(totalWords);
+                    });
+                });
+            };
+
+            reader.readAsArrayBuffer(file);
+        }
+
+        function updateWordCount(wordCount) {
+            document.getElementById('wordCount').textContent = 'Word Count: ' + wordCount;
+            const finalBill = wordCount * pricePerWord;
+            document.getElementById('finalBill').textContent = 'Final Bill: INR ' + finalBill.toFixed(2);
+        }
+
+        function getCurrentDateTime() {
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            return `${year}-${month}-${day}_${hours}-${minutes}`;
+        }
+    </script>
+</body>
+</html>
